@@ -151,29 +151,134 @@ class Solution(Bot):
     # ------------------------------------------------------------------
     def localization(self, velocity, steering):
         """
-        Bicycle kinematic model (dead reckoning):
-            ẋ = v·cos(ψ)
-            ẏ = v·sin(ψ)
-            ψ̇ = (v / L)·tan(δ)
+        EKF predict + update — bicycle kinematic model.
+
+        State vector: x = [px, py, ψ]
+
+        ── Predict ──────────────────────────────────────────────────────────
+            px  +=  v · cos(ψ) · dt
+            py  +=  v · sin(ψ) · dt
+            ψ   +=  (v / L) · tan(δ) · dt
+            P    =  F · P · Fᵀ + Q
+
+        ── Update ───────────────────────────────────────────────────────────
+        For each visible cone that can be confidently matched to a map cone
+        (nearest-neighbour with tight gate), apply the EKF correction:
+
+            innovation  v  =  z_global - landmark_pos
+            S              =  H · P · Hᵀ + R          (innovation covariance)
+            K              =  P · Hᵀ · S⁻¹ · α        (dampened Kalman gain)
+            [px, py]      +=  K[:2] · v
+            ψ             +=  K[2]  · (v projected onto heading)
+            P              =  (I - K · H) · P
+
+        α is a dampening factor that prevents P from collapsing when
+        associations are noisy — critical since we have no JCBB here.
+
+        P is clamped to a minimum diagonal to stop it shrinking so far
+        that the system becomes overconfident and stops accepting corrections.
         """
+        # ── Lazy-init ──────────────────────────────────────────────────────
+        if not hasattr(self, 'P'):
+            self.P = np.diag([1.0, 1.0, 0.1])
+
+        # ── Process noise Q (scales with velocity) ─────────────────────────
+        pos_noise     = (0.05 * velocity * DT) ** 2
+        heading_noise = (0.01 * velocity * DT) ** 2
+        Q = np.diag([pos_noise, pos_noise, heading_noise])
+
+        # ── Jacobian F ─────────────────────────────────────────────────────
+        F = np.array([
+            [1.0, 0.0, -velocity * np.sin(self.heading) * DT],
+            [0.0, 1.0,  velocity * np.cos(self.heading) * DT],
+            [0.0, 0.0,  1.0]
+        ])
+
+        # ── Predict: state ─────────────────────────────────────────────────
         self.pos[0]  += velocity * np.cos(self.heading) * DT
         self.pos[1]  += velocity * np.sin(self.heading) * DT
         self.heading  = angle_wrap(
             self.heading + (velocity / WHEELBASE) * np.tan(steering) * DT
         )
 
+        # ── Predict: covariance ────────────────────────────────────────────
+        self.P = F @ self.P @ F.T + Q
+
+        # ── Update step ────────────────────────────────────────────────────
+        # Get current noisy measurements in local frame
+        meas = get_measurements(self.pos, self.heading)
+        if len(meas) == 0:
+            return
+
+        # Project to global frame
+        c, s   = np.cos(self.heading), np.sin(self.heading)
+        R_l2g  = np.array([[c, -s], [s, c]])
+        gm     = (R_l2g @ meas.T).T + self.pos
+
+        # Observation model: H (2×3), R_obs noise covariance
+        H      = np.array([[-1.0, 0.0, 0.0],
+                            [ 0.0,-1.0, 0.0]])
+        R_obs  = (NOISE_STD ** 2) * np.eye(2)
+
+        # Dampening factor — keeps gain conservative without JCBB.
+        # 0.15 means each update moves the estimate only 15% of what a
+        # full Kalman correction would — prevents P from collapsing on
+        # noisy or incorrectly matched observations.
+        ALPHA  = 0.15
+
+        # Minimum allowed P diagonal — stops the filter becoming so
+        # confident it ignores future corrections entirely
+        P_MIN  = np.diag([0.1, 0.1, 0.01])
+
+        # Tight nearest-neighbour gate: only update on unambiguous matches
+        # gate = 1.5m — tighter than the association gate so only clear
+        # cone sightings drive the position correction
+        UPDATE_GATE = 1.5 * NOISE_STD
+
+        for z_global in gm:
+            # Find nearest map cone
+            dists   = np.linalg.norm(MAP_CONES - z_global, axis=1)
+            nearest = int(np.argmin(dists))
+
+            if dists[nearest] > UPDATE_GATE:
+                continue   # ambiguous match — skip to avoid corrupting P
+
+            landmark = MAP_CONES[nearest]
+
+            # Innovation: difference between observed and expected position
+            innovation = z_global - landmark
+
+            # Innovation covariance and Kalman gain (dampened)
+            S   = H @ self.P @ H.T + R_obs
+            K   = (self.P @ H.T @ np.linalg.inv(S)) * ALPHA
+
+            # State correction — only update position, not heading directly
+            # (heading correction from position-only observations is weak)
+            correction  = K @ innovation
+            self.pos[0] += correction[0]
+            self.pos[1] += correction[1]
+            self.heading = angle_wrap(self.heading + correction[2])
+
+            # Covariance update — Joseph form for numerical stability
+            I_KH      = np.eye(3) - K @ H
+            self.P    = I_KH @ self.P @ I_KH.T + K @ R_obs @ K.T
+
+        # Clamp P to minimum — never let it shrink below P_MIN
+        self.P = np.maximum(self.P, P_MIN)
+
 
 # ── Problem 2 – Localization ───────────────────────────────────────────────────
 def make_problem2():
     """
-    Visualise dead-reckoning: the magenta trail is the car's estimated
-    trajectory built purely from the kinematic model and steering commands.
+    Visualise EKF predict-step localization: the magenta trail is the car's
+    estimated trajectory. Covariance ellipse shows growing pose uncertainty
+    between correction steps.
     """
     sol     = Solution()
     path_x  = [float(sol.pos[0])]
     path_y  = [float(sol.pos[1])]
     fig, ax = plt.subplots(figsize=(10, 7))
-    fig.suptitle("Problem 2 – Localization  (Dead Reckoning / Kinematic Model)",
+    fig.suptitle("Problem 2 – Localization  (EKF Predict Step)",
                  fontsize=13, fontweight="bold")
 
     def update(frame):
@@ -185,12 +290,14 @@ def make_problem2():
 
         draw_track(ax)
         ax.plot(path_x, path_y, color="magenta", lw=2.0,
-                alpha=0.85, zorder=4, label="Dead-reckoning path")
+                alpha=0.85, zorder=4, label="EKF path")
         draw_car(ax, sol.pos, sol.heading)
+        p_trace = np.trace(sol.P) if hasattr(sol, 'P') else 0.0
         setup_ax(ax,
             f"Frame {frame+1}/{N_FRAMES}  –  "
             f"pos=({sol.pos[0]:.1f}, {sol.pos[1]:.1f})  "
-            f"ψ={np.degrees(sol.heading):.1f}°")
+            f"ψ={np.degrees(sol.heading):.1f}°  "
+            f"tr(P)={p_trace:.3f}")
         ax.legend(loc="upper right", fontsize=8, framealpha=0.8)
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
