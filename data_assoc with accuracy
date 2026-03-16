@@ -193,12 +193,7 @@ class Solution(Bot):
         # compute distance matrix
         D = distance.cdist(gm, current_map)
 
-        # ── Adaptive gate ──────────────────────────────────────────────────────
-        # Base term: 3-sigma noise envelope in 2-D (chi2 dof=2 at 95% ≈ 2.45σ,
-        # we use 3.0 for a little extra margin).
-        # Speed term: at high speed the dead-reckoning position drifts between
-        # frames, so cone projections land further from their true map position.
-        # We add a fraction of the distance the car travels in one DT so the
+       
         # gate grows gracefully with velocity rather than snapping hard at 2.95m.
         noise_radius = 3.0 * NOISE_STD                 # pure sensor noise term
         motion_slack = 0.25 * SPEED * DT               # ~25% of one-frame travel
@@ -226,12 +221,7 @@ class Solution(Bot):
         if not hasattr(self, '_hit_count'):
             self._hit_count    = {}
             self.CONFIRM_THRESH = 3
-        # For every map landmark, check whether it was matched this frame.
-        # Consistent match  → increment its hit counter.
-        # No match this frame → reset counter to 0 (streak broken).
-        # Only associations whose counter has reached CONFIRM_THRESH are
-        # considered confirmed; the rest are set back to -1 so they are
-        # invisible to both the visualiser and the mapping step.
+        
 
         matched_this_frame = set(c for c in assoc if c != -1)
 
