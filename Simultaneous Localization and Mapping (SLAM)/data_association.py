@@ -44,13 +44,13 @@ CENTERLINE = _build_centerline()
 
 
 # ── Simulation Parameters ─────────────────────────────────────────────────────
-SENSOR_RANGE = 12.0
-NOISE_STD = 1.0
-WHEELBASE = 3.0
-DT = 0.1
-SPEED = 10.0
-LOOKAHEAD = 5.5
-N_FRAMES = 130
+SENSOR_RANGE = 12.0   # metres – sensor visibility radius
+NOISE_STD    = 0.20   # metres – measurement noise std-dev
+WHEELBASE    = 3.0    # metres – bicycle model wheelbase
+DT           = 0.1    # seconds – time step
+SPEED        = 7.0    # m/s
+LOOKAHEAD    = 5.5    # pure-pursuit lookahead distance (m)
+N_FRAMES     = 130    # ≈ one full lap
 
 
 # ── Utility Functions ─────────────────────────────────────────────────────────
