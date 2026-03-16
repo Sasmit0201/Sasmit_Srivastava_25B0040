@@ -44,13 +44,13 @@ CENTERLINE = _build_centerline()
 
 
 # ── Simulation Parameters ─────────────────────────────────────────────────────
-SENSOR_RANGE = 12.0   # metres – sensor visibility radius
-NOISE_STD    = 0.20   # metres – measurement noise std-dev
-WHEELBASE    = 3.0    # metres – bicycle model wheelbase
-DT           = 0.1    # seconds – time step
-SPEED        = 7.0    # m/s
-LOOKAHEAD    = 5.5    # pure-pursuit lookahead distance (m)
-N_FRAMES     = 130    # ≈ one full lap
+SENSOR_RANGE = 12.0
+NOISE_STD = 1.0
+WHEELBASE = 3.0
+DT = 0.1
+SPEED = 10.0
+LOOKAHEAD = 5.5
+N_FRAMES = 130
 
 
 # ── Utility Functions ─────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ class Solution(Bot):
         self.exact_history = []
         self.near_history = []
 
-    def data_association(self, measurements, true_idx, current_map):
+    def data_association(self, measurements, current_map):
 
         if len(measurements) == 0 or len(current_map) == 0:
             self._assoc = np.array([], dtype=int)
@@ -253,50 +253,7 @@ class Solution(Bot):
 
         self._assoc = confirmed_assoc
 
-        # ── Accuracy Metrics ───────────────────────────────────────────────────
-        # Lazy-init coverage history and frame counter
-        if not hasattr(self, 'coverage_history'):
-            self.coverage_history = []
-        if not hasattr(self, '_frame_count'):
-            self._frame_count = 0
-        self._frame_count += 1
 
-        total     = len(true_idx)
-        confirmed = int(np.sum(confirmed_assoc != -1))
-
-        # Skip first 5 frames — streaks are still warming up so metrics
-        # would be artificially low and not representative of steady-state
-        WARMUP_FRAMES = 50
-        if self._frame_count <= WARMUP_FRAMES:
-            return
-
-        # Coverage: fraction of this frame's measurements that got confirmed
-        self.coverage_history.append(confirmed / total)
-
-        # Precision: of confirmed associations only, how many were correct
-        # (valid-only denominator — unconfirmed ones don't count either way)
-        exact_correct = 0
-        near_correct  = 0
-        valid         = 0
-
-        for pred, true in zip(self._assoc, true_idx):
-
-            if pred == -1:
-                continue
-
-            valid += 1
-
-            if pred == true:
-                exact_correct += 1
-
-            dist = np.linalg.norm(current_map[pred] - current_map[true])
-
-            if dist <= 1.5:
-                near_correct += 1
-
-        if valid > 0:
-            self.exact_history.append(exact_correct / valid)
-            self.near_history.append(near_correct  / valid)
 
 # ── Visualization ─────────────────────────────────────────────────────────────
 def make_problem1():
@@ -311,9 +268,9 @@ def make_problem1():
 
         steer = pure_pursuit(sol.pos,sol.heading,CENTERLINE)
 
-        meas,true_idx = get_measurements(sol.pos,sol.heading)
+        meas,_ = get_measurements(sol.pos,sol.heading)
 
-        sol.data_association(meas,true_idx,MAP_CONES)
+        sol.data_association(meas,MAP_CONES)
 
         sol.pos,sol.heading = step_kinematic(sol.pos,sol.heading,SPEED,steer)
 
